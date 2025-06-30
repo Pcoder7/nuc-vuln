@@ -144,7 +144,7 @@ jobs:
         if: steps.calculate_distribution.outputs.secondary_chunks_exist == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: nuclei_receive.yml # **IMPORTANT: The receiving workflow must be named this**
+          workflow: nuc_receive.yml # **IMPORTANT: The receiving workflow must be named this**
           repo: ${{ env.ACCOUNT2_REPO_OWNER }}/${{ env.ACCOUNT2_REPO_NAME }}
           token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           inputs: ${{ steps.prepare_payload.outputs.json_string }}
