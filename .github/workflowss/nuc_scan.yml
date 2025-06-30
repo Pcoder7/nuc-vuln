@@ -1,0 +1,230 @@
+name: Distributed Nuclei Scan
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # For creating artifacts and potentially committing aggregated results
+  actions: write    # For triggering workflows in the secondary repository
+
+env:
+  TARGETS_PER_CHUNK: 80
+  PRIMARY_ACCOUNT_MAX_PARALLEL: 20 # Max parallel jobs for THIS account's scan job
+  # Define the secondary account repo details for offloading work
+  ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER  }}
+  ACCOUNT2_REPO_NAME: ${{ secrets.ACCOUNT2_REPO_NAME }}
+
+jobs:
+  prepare_scan_chunks_and_package:
+    name: Prepare Target Chunks & Package
+    runs-on: ubuntu-latest
+    outputs:
+      # The full JSON matrix string of ALL generated target chunks
+      all_chunks_matrix_json: ${{ steps.build_full_matrix.outputs.full_matrix }}
+      # The total number of chunks generated
+      total_chunks_count: ${{ steps.build_full_matrix.outputs.total_chunks }}
+      # The name of the artifact containing all chunks
+      chunk_package_artifact_name: "scan-chunks-package-${{ github.run_id }}"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Verify Essential Tools (jq, split)
+        shell: bash
+        run: |
+          echo "Verifying essential tools are present..."
+          command -v jq >/dev/null 2>&1 || { echo "jq is not installed. Aborting."; exit 1; }
+          command -v split >/dev/null 2>&1 || { echo "split is not installed. Aborting."; exit 1; }
+          echo "All essential tools found."
+
+      - name: Build Full Matrix & Create Target Chunks
+        id: build_full_matrix
+        shell: bash
+        run: |
+          # This script logic is identical to the original, as it is tool-agnostic.
+          # It finds subdomains.txt files, splits them, and creates a JSON matrix.
+          JSON_MATRIX='[]'
+          echo "INFO: Locating 'subdomains.txt' files..."
+          find . -type f -name "subdomains.txt" -print0 > found_files.tmp
+
+          declare -a files=()
+          while IFS= read -r -d $'\0' file_path_from_find; do
+            files+=("$(echo "$file_path_from_find" | sed 's|^\./||')")
+          done < found_files.tmp
+          rm found_files.tmp
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "WARNING: No 'subdomains.txt' files found."
+          else
+            echo "INFO: Found ${#files[@]} 'subdomains.txt' file(s)."
+            for file_path in "${files[@]}"; do
+              domain_dir=$(dirname "$file_path")
+              if [ "$domain_dir" == "." ]; then domain=$(basename "$file_path" .txt); else domain=$(basename "$domain_dir"); fi
+              if [ ! -s "$file_path" ]; then echo "WARNING: File '$file_path' is empty. Skipping."; continue; fi
+
+              mkdir -p "chunks/$domain"
+              split -l "$TARGETS_PER_CHUNK" -a 3 --numeric-suffixes=1 "$file_path" "chunks/$domain/chunk_"
+              
+              while IFS= read -r chunk_file_path; do
+                [ -z "$chunk_file_path" ] && continue
+                JSON_MATRIX=$(printf '%s' "$JSON_MATRIX" | jq -c --arg d "$domain" --arg c "$chunk_file_path" '. + [{domain:$d,chunk:$c}]')
+              done < <(find "chunks/$domain/" -name 'chunk_*' -type f -print)
+            done
+          fi
+
+          TOTAL_CHUNKS=$(echo "$JSON_MATRIX" | jq 'length')
+          echo "FINAL_BUILD_INFO: Total target chunks in matrix: $TOTAL_CHUNKS"
+          echo "full_matrix=$JSON_MATRIX" >> $GITHUB_OUTPUT
+          echo "total_chunks=$TOTAL_CHUNKS" >> $GITHUB_OUTPUT
+
+      - name: Package All Target Chunks
+        id: package_chunks
+        if: steps.build_full_matrix.outputs.total_chunks > 0
+        shell: bash
+        run: |
+          BASE_ARTIFACT_NAME="scan-chunks-package-${{ github.run_id }}"
+          PACKAGE_TAR_FILENAME="${BASE_ARTIFACT_NAME}.tar.gz"
+          echo "INFO: Creating tarball: $PACKAGE_TAR_FILENAME"
+          tar -czvf "$PACKAGE_TAR_FILENAME" chunks
+          echo "package_tar_filename=$PACKAGE_TAR_FILENAME" >> $GITHUB_OUTPUT
+          echo "base_artifact_name=$BASE_ARTIFACT_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload Full Chunks Package
+        if: steps.build_full_matrix.outputs.total_chunks > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package_chunks.outputs.base_artifact_name }}
+          path: ${{ steps.package_chunks.outputs.package_tar_filename }}
+          retention-days: 2
+
+  distribute_and_trigger_secondary:
+    name: Distribute Work & Trigger Secondary Scan
+    needs: prepare_scan_chunks_and_package
+    if: needs.prepare_scan_chunks_and_package.outputs.total_chunks_count > 0
+    runs-on: ubuntu-latest
+    outputs:
+      primary_matrix_json: ${{ steps.calculate_distribution.outputs.primary_matrix }}
+    steps:
+      - name: Calculate Chunk Distribution
+        id: calculate_distribution
+        shell: bash
+        run: |
+          ALL_CHUNKS_JSON='${{ needs.prepare_scan_chunks_and_package.outputs.all_chunks_matrix_json }}'
+          PRIMARY_MAX_PARALLEL=${{ env.PRIMARY_ACCOUNT_MAX_PARALLEL }}
+          CHUNKS_FOR_PRIMARY=$(echo "$ALL_CHUNKS_JSON" | jq -c ".[0:$PRIMARY_MAX_PARALLEL]")
+          CHUNKS_FOR_SECONDARY=$(echo "$ALL_CHUNKS_JSON" | jq -c ".[$PRIMARY_MAX_PARALLEL:]")
+          echo "primary_matrix=$CHUNKS_FOR_PRIMARY" >> $GITHUB_OUTPUT
+          echo "secondary_matrix=$CHUNKS_FOR_SECONDARY" >> $GITHUB_OUTPUT
+          echo "secondary_chunks_exist=$(if [ $(echo "$CHUNKS_FOR_SECONDARY" | jq 'length') -gt 0 ]; then echo true; else echo false; fi)" >> $GITHUB_OUTPUT
+      
+      - name: Prepare Trigger Payload for Secondary Scan
+        id: prepare_payload
+        if: steps.calculate_distribution.outputs.secondary_chunks_exist == 'true'
+        shell: bash
+        run: |
+          SECONDARY_MATRIX_AS_STRING='${{ steps.calculate_distribution.outputs.secondary_matrix }}'
+          JSON_PAYLOAD=$(jq -cn \
+            --arg server_url "${{ github.server_url }}" \
+            --arg repo_owner "${{ github.repository_owner }}" \
+            --arg repo_name "${{ github.event.repository.name }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg artifact_name "${{ needs.prepare_scan_chunks_and_package.outputs.chunk_package_artifact_name }}" \
+            --arg matrix_as_a_string "${SECONDARY_MATRIX_AS_STRING}" \
+            '{
+              "primary_github_server_url": $server_url,
+              "primary_repo_owner": $repo_owner,
+              "primary_repo_name": $repo_name,
+              "primary_run_id": $run_id,
+              "chunk_package_artifact_name": $artifact_name,
+              "secondary_matrix_json": $matrix_as_a_string 
+            }')
+          echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
+      
+      - name: Trigger Secondary Account Scan Workflow
+        if: steps.calculate_distribution.outputs.secondary_chunks_exist == 'true'
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: nuclei_receive.yml # **IMPORTANT: The receiving workflow must be named this**
+          repo: ${{ env.ACCOUNT2_REPO_OWNER }}/${{ env.ACCOUNT2_REPO_NAME }}
+          token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
+          inputs: ${{ steps.prepare_payload.outputs.json_string }}
+          ref: main
+
+  run_nuclei_on_primary_chunks:
+    name: Run Nuclei Scan on Primary Chunks
+    needs: [prepare_scan_chunks_and_package, distribute_and_trigger_secondary]
+    if: needs.prepare_scan_chunks_and_package.outputs.total_chunks_count > 0 && needs.distribute_and_trigger_secondary.outputs.primary_matrix_json != '[]'
+    runs-on: ubuntu-latest
+    container:
+      # Using the official projectdiscovery container is ideal for Nuclei
+      image: projectdiscovery/nuclei:latest
+      # We need to override the entrypoint to run shell commands
+      options: --entrypoint "" 
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        pair: ${{ fromJson(needs.distribute_and_trigger_secondary.outputs.primary_matrix_json) }}
+    steps:
+      - name: Download and Extract Target Chunks
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare_scan_chunks_and_package.outputs.chunk_package_artifact_name }}
+      - run: |
+          PACKAGE_FILENAME="${{ needs.prepare_scan_chunks_and_package.outputs.chunk_package_artifact_name }}.tar.gz"
+          tar -xzvf "$PACKAGE_FILENAME"
+          if [ ! -d "chunks" ]; then echo "ERROR: 'chunks/' not found!"; exit 1; fi
+          ls -R chunks/
+        shell: bash
+
+      - name: Run Nuclei Scan
+        shell: bash
+        run: |
+          DOMAIN=${{ matrix.pair.domain }}
+          CHUNK_FILE_PATH=${{ matrix.pair.chunk }}
+          RESULTS_DIR="scan-results"
+          OUTPUT_FILE="$RESULTS_DIR/nuclei_output_${DOMAIN}.txt"
+
+          echo "Processing domain '$DOMAIN' with chunk '$CHUNK_FILE_PATH'..."
+          if [ ! -f "$CHUNK_FILE_PATH" ]; then
+            echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
+            exit 1
+          fi
+
+          # Create a directory to store results for this job
+          mkdir -p "$RESULTS_DIR"
+
+          # Update Nuclei templates to the latest version (good practice)
+          echo "-> Updating Nuclei templates..."
+          nuclei -ut -silent
+
+          # Run the Nuclei scan on the assigned chunk
+          echo "-> Running Nuclei on '$CHUNK_FILE_PATH'..."
+          nuclei \
+            -l "$CHUNK_FILE_PATH" \
+            -t cves,technologies,vulnerabilities \
+            -es info,unknown \
+            -silent \
+            -o "$OUTPUT_FILE"
+
+          if [ ! -s "$OUTPUT_FILE" ]; then
+            echo "-> No findings from Nuclei for this chunk."
+            # We still create an empty file so the artifact upload doesn't fail
+            touch "$OUTPUT_FILE"
+          else
+            echo "-> Nuclei scan complete. Results are in '$OUTPUT_FILE'."
+          fi
+          
+      - name: Create Safe Chunk Name for Artifact
+        id: safe_chunk_name
+        run: |
+          SAFE_CHUNK_NAME="${{ matrix.pair.chunk }}"
+          echo "safe_name=$(echo "$SAFE_CHUNK_NAME" | tr '/' '_')" >> $GITHUB_OUTPUT
+        shell: bash
+      
+      - name: Upload Nuclei Scan Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: primary_nuclei_results_${{ matrix.pair.domain }}_${{ steps.safe_chunk_name.outputs.safe_name }}
+          path: scan-results/
+          retention-days: 2
