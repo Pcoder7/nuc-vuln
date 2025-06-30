@@ -94,8 +94,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package_chunks.outputs.base_artifact_name }}
-          path: ${{ steps.package_chunks.outputs.package_tar_filename }}
-          retention-days: 2
+          path: ${{ steps.package_chunks.outputs.package_tar_filename }}.tar.gz 
+          retention-days: 1
 
   distribute_and_trigger_secondary:
     name: Distribute Work & Trigger Secondary Scan
@@ -173,13 +173,13 @@ jobs:
       - name: Download Full Chunks Package for Primary
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}
+          name: scan-chunks-package-${{ github.run_id }}
           # Downloads to current directory
 
       - name: Extract Chunks for Primary
         shell: bash
         run: |
-          PACKAGE_FILENAME="${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}.tar.gz"
+          PACKAGE_FILENAME="scan-chunks-package-${{ github.run_id }}.tar.gz"
           echo "Extracting $PACKAGE_FILENAME..."
           tar -xzvf "$PACKAGE_FILENAME"
           if [ ! -d "chunks" ]; then
