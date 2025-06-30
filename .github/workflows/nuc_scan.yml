@@ -166,7 +166,10 @@ jobs:
       matrix:
         pair: ${{ fromJson(needs.distribute_and_trigger_secondary.outputs.primary_matrix_json) }}
     steps:
-      
+
+      - name: Checkout repository (for results structure)
+        uses: actions/checkout@v3
+          
       - name: Download Full Chunks Package for Primary
         uses: actions/download-artifact@v4
         with:
