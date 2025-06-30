@@ -194,8 +194,6 @@ jobs:
         run: |
           DOMAIN=${{ matrix.pair.domain }}
           CHUNK_FILE_PATH=${{ matrix.pair.chunk }}
-          RESULTS_DIR="scan-results"
-          OUTPUT_FILE="$RESULTS_DIR/nuclei_output_${DOMAIN}.txt"
 
           echo "Processing domain '$DOMAIN' with chunk '$CHUNK_FILE_PATH'..."
           if [ ! -f "$CHUNK_FILE_PATH" ]; then
@@ -210,6 +208,7 @@ jobs:
           echo "-> Updating Nuclei templates..."
           nuclei -ut -silent
 
+          OUTPUT_FILE="nuclei_output.txt"
           # Run the Nuclei scan on the assigned chunk
           echo "-> Running Nuclei on '$CHUNK_FILE_PATH'..."
           nuclei \
@@ -265,7 +264,7 @@ jobs:
           DOMAIN="${{ matrix.pair.domain }}"
       
           # 2. Path to the file with only the new subdomains
-          FILE="scan-results/nuclei_output_${DOMAIN}.txt"
+          FILE="nuclei_output.txt"
       
           # 3. Count how many new subdomains we have
           COUNT=$(wc -l < "$FILE")
