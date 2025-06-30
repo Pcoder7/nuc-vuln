@@ -201,8 +201,6 @@ jobs:
             exit 1
           fi
 
-          # Create a directory to store results for this job
-          mkdir -p "$RESULTS_DIR"
 
           # Update Nuclei templates to the latest version (good practice)
           echo "-> Updating Nuclei templates..."
@@ -213,7 +211,7 @@ jobs:
           echo "-> Running Nuclei on '$CHUNK_FILE_PATH'..."
           nuclei \
             -l "$CHUNK_FILE_PATH" \
-            -t ~/nuclei-templates/http/exposed-panels \
+            -t ~/nuclei-templates/http/technologies \
             -ss template-spray \
             -c 10 \
             -bs 80 \
@@ -272,7 +270,7 @@ jobs:
           # 4. If more than 50, send a header message, then the file
           if [ "$COUNT" -gt 3 ]; then
             # 4a. Send a text header with domain and date
-            echo -e "🔔 $COUNT New Entry for ${DOMAIN}\n📅 Date: ${DATE}" \
+            echo -e "🔔 $COUNT New Entry  \n📅 Date: ${DATE}" \
               | notify -id subscan
             # 4b. Send the full list as a file
             notify -bulk -id subscan -data "$FILE"
