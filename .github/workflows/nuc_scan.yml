@@ -94,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package_chunks.outputs.base_artifact_name }}
-          path: ${{ steps.package_chunks.outputs.package_tar_filename }}.tar.gz 
+          path: ${{ steps.package_chunks.outputs.package_tar_filename }}
           retention-days: 1
 
   distribute_and_trigger_secondary:
