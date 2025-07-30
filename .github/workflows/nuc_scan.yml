@@ -88,10 +88,11 @@ jobs:
           awk '{for(i=1;i<=NF;i++){gsub(/^\+/, "", $i); print $i}}' latest_entries.txt > entries.txt
 
           head -n1000 entries.txt > for_nuclei.txt
+          head -n5 for_nuclei.txt
           printf "::endgroup::\n"
 
           printf "::group::[DEBUG] Block 4: Final Validation\n"
-          COUNT=$(wc -l < latest_entries.txt)
+          COUNT=$(wc -l < for_nuclei.txt)
           if [ "$COUNT" -eq 0 ]; then
             printf "::error::No added content lines were found in commit %s.\n" "$COMMIT"
             exit 1
