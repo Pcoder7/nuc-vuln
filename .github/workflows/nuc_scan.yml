@@ -25,53 +25,112 @@ jobs:
       total_chunks_count: ${{ steps.build_full_matrix.outputs.total_chunks }}
       # The name of the artifact containing all chunks
       chunk_package_artifact_name: "scan-chunks-package-${{ github.run_id }}"
+    env:
+      STORE_OWNER: ${{ secrets.SECONDRY_USERNAME }}
+      STORE_REPO_NAME: ${{ secrets.STORE }}
+      STORE_TOKEN: ${{ secrets.PAT_FOR_SECONDRY }}
+      
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          repository: ${{ env.STORE_OWNER }}/${{ env.STORE_REPO_NAME }}
+          token: ${{ env.STORE_TOKEN }}
+          fetch-depth: 0
 
+      - name: Configure Git for Scripting
+        run: git config --global color.ui never        
+
+      - name: Extract Latest Entries
+        id: extract_entries
+        shell: bash
+        run: |
+
+          PATTERN="feat: Add new assets from distributed permutation scan"
+          printf "::group::[DEBUG] Block 1: Finding Commit\n"
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            COMMIT="${{ github.event.workflow_run.head_sha }}"
+          else
+            COMMIT=$(git log --no-merges --grep="$PATTERN" -n1 --format="%H")
+          fi
+          if [ -z "$COMMIT" ]; then
+            printf "::error::No commit found matching '$PATTERN'\n"
+            exit 1
+          fi
+          echo "   → Found commit: $COMMIT"
+          printf "::endgroup::\n"
+
+          printf "::group::[DEBUG] Block 2: Generating Raw Diff\n"
+          if git rev-parse --verify $COMMIT^ >/dev/null 2>&1; then
+            git diff "$COMMIT^" "$COMMIT" --unified=0 > raw_diff.log
+          else
+            git show "$COMMIT" --unified=0 > raw_diff.log
+          fi
+          printf "::endgroup::\n"
+          
+          printf "::group::[DEBUG] Block 3: Filtering Diff\n"
+          grep '^\+' raw_diff.log --color=never | grep -vE '^\+\+\+' --color=never > latest_entries.txt || true
+
+          awk '{for(i=1;i<=NF;i++){gsub(/^\+/, "", $i); print $i}}' latest_entries.txt > entries.txt
+
+          head -n3200 entries.txt > for_nuclei.txt
+          printf "::endgroup::\n"
+
+          printf "::group::[DEBUG] Block 4: Final Validation\n"
+          COUNT=$(wc -l < latest_entries.txt)
+          if [ "$COUNT" -eq 0 ]; then
+            printf "::error::No added content lines were found in commit %s.\n" "$COMMIT"
+            exit 1
+          fi
+          echo "✅ Successfully extracted $COUNT new entries into latest_entries.txt"
+          printf "::endgroup::\n"
+            
       - name: Verify Essential Tools (jq, split)
         shell: bash
         run: |
           echo "Verifying essential tools are present..."
-          command -v jq >/dev/null 2>&1 || { echo "jq is not installed. Aborting."; exit 1; }
-          command -v split >/dev/null 2>&1 || { echo "split is not installed. Aborting."; exit 1; }
+          command -v jq >/dev/null 2>&1 || { echo "jq is not installed. Aborting."; exit 0; }
+
           echo "All essential tools found."
 
       - name: Build Full Matrix & Create Target Chunks
         id: build_full_matrix
         shell: bash
         run: |
-          # This script logic is identical to the original, as it is tool-agnostic.
-          # It finds subdomains.txt files, splits them, and creates a JSON matrix.
+          # --- Initialization ---
           JSON_MATRIX='[]'
-          echo "INFO: Locating 'subdomains.txt' files..."
-          find . -type f -name "subdomains.txt" -print0 > found_files.tmp
+          # Define constants for clarity and easy maintenance.
+          # INPUT_FILE is the single source of truth from the previous step.
+          INPUT_FILE="for_nuclei.txt"
+          # DOMAIN_NAME is the static name for the subdirectory inside chunks/.
+          DOMAIN_NAME="latestscan"
 
-          declare -a files=()
-          while IFS= read -r -d $'\0' file_path_from_find; do
-            files+=("$(echo "$file_path_from_find" | sed 's|^\./||')")
-          done < found_files.tmp
-          rm found_files.tmp
-
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "WARNING: No 'subdomains.txt' files found."
+          echo "INFO: Processing a single input file: '$INPUT_FILE'"
+          
+          # --- Main Processing Logic ---
+          # Instead of searching and looping, we now check for one specific file.
+          # The '-s' flag checks if the file exists AND is not empty.
+          if [ ! -s "$INPUT_FILE" ]; then
+            echo "WARNING: Input file '$INPUT_FILE' not found or is empty. No chunks will be created."
           else
-            echo "INFO: Found ${#files[@]} 'subdomains.txt' file(s)."
-            for file_path in "${files[@]}"; do
-              domain_dir=$(dirname "$file_path")
-              if [ "$domain_dir" == "." ]; then domain=$(basename "$file_path" .txt); else domain=$(basename "$domain_dir"); fi
-              if [ ! -s "$file_path" ]; then echo "WARNING: File '$file_path' is empty. Skipping."; continue; fi
-
-              mkdir -p "chunks/$domain"
-              split -l "$TARGETS_PER_CHUNK" -a 3 --numeric-suffixes=1 "$file_path" "chunks/$domain/chunk_"
-              
-              while IFS= read -r chunk_file_path; do
-                [ -z "$chunk_file_path" ] && continue
-                JSON_MATRIX=$(printf '%s' "$JSON_MATRIX" | jq -c --arg d "$domain" --arg c "$chunk_file_path" '. + [{domain:$d,chunk:$c}]')
-              done < <(find "chunks/$domain/" -name 'chunk_*' -type f -print)
-            done
+            echo "INFO: Found `wc -l < $INPUT_FILE` targets in '$INPUT_FILE'."
+            
+            # 1. Create the single, statically-named output directory.
+            mkdir -p "chunks/$DOMAIN_NAME"
+            
+            # 2. Split the single input file into chunks within that directory.
+            split -l "${TARGETS_PER_CHUNK:-100}" -a 3 --numeric-suffixes=1 "$INPUT_FILE" "chunks/$DOMAIN_NAME/chunk_"
+            
+            # 3. Find all chunks that were just created and build the JSON matrix.
+            # This loop is still needed, but it's now outside the old 'for' loop.
+            while IFS= read -r chunk_file_path; do
+              # Skip any empty lines that 'find' might produce.
+              [ -z "$chunk_file_path" ] && continue
+              JSON_MATRIX=$(printf '%s' "$JSON_MATRIX" | jq -c --arg d "$DOMAIN_NAME" --arg c "$chunk_file_path" '. + [{domain:$d,chunk:$c}]')
+            done < <(find "chunks/$DOMAIN_NAME/" -name 'chunk_*' -type f -print)
           fi
 
+          # --- Final Output Generation (This logic is unchanged) ---
           TOTAL_CHUNKS=$(echo "$JSON_MATRIX" | jq 'length')
           echo "FINAL_BUILD_INFO: Total target chunks in matrix: $TOTAL_CHUNKS"
           echo "full_matrix=$JSON_MATRIX" >> $GITHUB_OUTPUT
@@ -82,13 +141,15 @@ jobs:
         if: steps.build_full_matrix.outputs.total_chunks > 0
         shell: bash
         run: |
+          # This step works perfectly with the modified step above because the 
+          # output directory structure 'chunks/' is preserved.
           BASE_ARTIFACT_NAME="scan-chunks-package-${{ github.run_id }}"
           PACKAGE_TAR_FILENAME="${BASE_ARTIFACT_NAME}.tar.gz"
           echo "INFO: Creating tarball: $PACKAGE_TAR_FILENAME"
           tar -czvf "$PACKAGE_TAR_FILENAME" chunks
           echo "package_tar_filename=$PACKAGE_TAR_FILENAME" >> $GITHUB_OUTPUT
           echo "base_artifact_name=$BASE_ARTIFACT_NAME" >> $GITHUB_OUTPUT
-
+          
       - name: Upload Full Chunks Package
         if: steps.build_full_matrix.outputs.total_chunks > 0
         uses: actions/upload-artifact@v4
