@@ -14,7 +14,7 @@ permissions:
   actions: write    # For triggering workflows in the secondary repository
 
 env:
-  TARGETS_PER_CHUNK: 80
+  TARGETS_PER_CHUNK: 200
   PRIMARY_ACCOUNT_MAX_PARALLEL: 20 # Max parallel jobs for THIS account's scan job
   # Define the secondary account repo details for offloading work
   ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER  }}
@@ -46,6 +46,14 @@ jobs:
 
       - name: Configure Git for Scripting
         run: git config --global color.ui never        
+
+      - name: Verify Essential Tools (jq, split)
+        shell: bash
+        run: |
+          echo "Verifying essential tools are present..."
+          command -v jq >/dev/null 2>&1 || { echo "jq is not installed. Aborting."; exit 0; }
+
+          echo "All essential tools found."
 
       - name: Extract Latest Entries
         id: extract_entries
@@ -79,7 +87,7 @@ jobs:
 
           awk '{for(i=1;i<=NF;i++){gsub(/^\+/, "", $i); print $i}}' latest_entries.txt > entries.txt
 
-          head -n3200 entries.txt > for_nuclei.txt
+          head -n1000 entries.txt > for_nuclei.txt
           printf "::endgroup::\n"
 
           printf "::group::[DEBUG] Block 4: Final Validation\n"
@@ -90,14 +98,11 @@ jobs:
           fi
           echo "✅ Successfully extracted $COUNT new entries into latest_entries.txt"
           printf "::endgroup::\n"
-            
-      - name: Verify Essential Tools (jq, split)
-        shell: bash
-        run: |
-          echo "Verifying essential tools are present..."
-          command -v jq >/dev/null 2>&1 || { echo "jq is not installed. Aborting."; exit 0; }
 
-          echo "All essential tools found."
+         
+          echo "✅ Found $COUNT new entries in $COMMIT" 
+            
+
 
       - name: Build Full Matrix & Create Target Chunks
         id: build_full_matrix
@@ -280,10 +285,10 @@ jobs:
             -l "$CHUNK_FILE_PATH" \
             -t ~/nuclei-templates/http/technologies \
             -ss template-spray \
-            -c 10 \
-            -bs 80 \
-            -rl 100 \
-            -prc 100 \
+            -c 50 \
+            -bs 100 \
+            -rl 150 \
+            -prc 150 \
             -nc \
             -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36' \
             -o "$OUTPUT_FILE" \
