@@ -61,6 +61,10 @@ jobs:
         run: |
 
           PATTERN="feat: Add new assets from distributed permutation scan"
+          # The path pattern to find the target files using a wildcard (*)
+          TARGET_PATHSPEC="results/*/puredns_result.txt"
+
+          # --- Block 1: Finding the Commit (Unchanged) ---
           printf "::group::[DEBUG] Block 1: Finding Commit\n"
           if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
             COMMIT="${{ github.event.workflow_run.head_sha }}"
@@ -74,14 +78,20 @@ jobs:
           echo "   → Found commit: $COMMIT"
           printf "::endgroup::\n"
 
-          printf "::group::[DEBUG] Block 2: Generating Raw Diff\n"
+          # --- Block 2: Generating a Targeted Raw Diff using a Pathspec (Modified) ---
+          printf "::group::[DEBUG] Block 2: Generating Raw Diff for paths matching '$TARGET_PATHSPEC'\n"
+          # We provide the wildcard pathspec to git. It will find ALL files matching
+          # this pattern that were changed in the commit and create a combined diff.
           if git rev-parse --verify $COMMIT^ >/dev/null 2>&1; then
-            git diff "$COMMIT^" "$COMMIT" --unified=0 > raw_diff.log
+            git diff "$COMMIT^" "$COMMIT" --unified=0 -- "$TARGET_PATHSPEC" > raw_diff.log || true
           else
-            git show "$COMMIT" --unified=0 > raw_diff.log
+            git show "$COMMIT" --unified=0 -- "$TARGET_PATHSPEC" > raw_diff.log || true
           fi
           printf "::endgroup::\n"
           
+          # --- Block 3: Filtering Diff (Unchanged) ---
+          # This filtering logic does not need to change. It will correctly process
+          # the combined diff from all the matched files.
           printf "::group::[DEBUG] Block 3: Filtering Diff\n"
           grep '^\+' raw_diff.log --color=never | grep -vE '^\+\+\+' --color=never > latest_entries.txt || true
 
@@ -92,13 +102,15 @@ jobs:
           printf "::endgroup::\n"
 
           printf "::group::[DEBUG] Block 4: Final Validation\n"
-          COUNT=$(wc -l < for_nuclei.txt)
+          COUNT=$(wc -l < latest_entries.txt)
           if [ "$COUNT" -eq 0 ]; then
-            printf "::error::No added content lines were found in commit %s.\n" "$COMMIT"
+            # The error message now correctly references the pattern, not a single file.
+            printf "::error::No added content lines were found in files matching '%s' from commit %s.\n" "$TARGET_PATHSPEC" "$COMMIT"
             exit 1
           fi
-          echo "✅ Successfully extracted $COUNT new entries into latest_entries.txt"
+          echo "✅ Successfully extracted $COUNT new entries from files matching '$TARGET_PATHSPEC' into latest_entries.txt"
           printf "::endgroup::\n"
+
 
          
           echo "✅ Found $COUNT new entries in $COMMIT" 
