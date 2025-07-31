@@ -95,7 +95,7 @@ jobs:
           printf "::group::[DEBUG] Block 3: Filtering Diff\n"
           grep '^\+' raw_diff.log --color=never | grep -vE '^\+\+\+' --color=never > latest_entries.txt || true
 
-          awk '{for(i=1;i<=NF;i++){gsub(/^\+/, "", $i); print $i}}' latest_entries.txt > entries.txt
+          cat latest_entries.txt | awk '{for(i=1;i<=NF;i++){gsub(/^\+/, "", $i); print $i}}' | grep -vE '.af.mil' --color=never > entries.txt || true
 
           head -n1000 entries.txt > for_nuclei.txt
           head -n5 for_nuclei.txt
