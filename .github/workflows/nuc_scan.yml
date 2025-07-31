@@ -14,7 +14,7 @@ permissions:
   actions: write    # For triggering workflows in the secondary repository
 
 env:
-  TARGETS_PER_CHUNK: 200
+  TARGETS_PER_CHUNK: 30
   PRIMARY_ACCOUNT_MAX_PARALLEL: 20 # Max parallel jobs for THIS account's scan job
   # Define the secondary account repo details for offloading work
   ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER  }}
