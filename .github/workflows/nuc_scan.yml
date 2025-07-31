@@ -14,7 +14,7 @@ permissions:
   actions: write    # For triggering workflows in the secondary repository
 
 env:
-  TARGETS_PER_CHUNK: 30
+  TARGETS_PER_CHUNK: 15
   PRIMARY_ACCOUNT_MAX_PARALLEL: 20 # Max parallel jobs for THIS account's scan job
   # Define the secondary account repo details for offloading work
   ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER  }}
@@ -60,9 +60,9 @@ jobs:
         shell: bash
         run: |
 
-          PATTERN="feat: Add new assets from distributed permutation scan"
+          PATTERN="Update httpx results from workflow run"
           # The path pattern to find the target files using a wildcard (*)
-          TARGET_PATHSPEC="results/*/puredns_result.txt"
+          TARGET_PATHSPEC="results/*/httpx_result.txt"
 
           # --- Block 1: Finding the Commit (Unchanged) ---
           printf "::group::[DEBUG] Block 1: Finding Commit\n"
@@ -93,9 +93,9 @@ jobs:
           # This filtering logic does not need to change. It will correctly process
           # the combined diff from all the matched files.
           printf "::group::[DEBUG] Block 3: Filtering Diff\n"
-          grep '^\+' raw_diff.log --color=never | grep -vE '^\+\+\+' --color=never > latest_entries.txt || true
+          grep '^\+' raw_diff.log --color=never | grep -vE '^\+\+\+' --color=never | awk -F' ' '{print $1}' > latest_entries.txt || true
 
-          cat latest_entries.txt | awk '{for(i=1;i<=NF;i++){gsub(/^\+/, "", $i); print $i}}' | grep -vE '.af.mil' --color=never > entries.txt || true
+          cat latest_entries.txt |  awk '{for(i=1;i<=NF;i++){gsub(/^\+/, "", $i); print $i}}' | grep -vE '.af.mil' --color=never > entries.txt || true
 
           head -n500 entries.txt > for_nuclei.txt
           head -n5 for_nuclei.txt
