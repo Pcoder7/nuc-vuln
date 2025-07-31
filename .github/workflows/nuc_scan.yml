@@ -301,7 +301,7 @@ jobs:
             -c 50 \
             -bs 100 \
             -rl 150 \
-            -prc 150 \
+            -no-httpx \
             -nc \
             -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36' \
             -o "$OUTPUT_FILE" \
