@@ -367,4 +367,20 @@ jobs:
               echo
               cat "$FILE"
             } | notify -bulk -id subscan
-          fi      
+          fi    
+
+  trigger_puredns_permut:
+    name: Trigger Puredns Permutation
+    needs: [run_nuclei_on_primary_chunks]
+    
+    if: success() 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger next workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: permutate.yml
+          repo: Pcoder7/puredns-permut
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: main
+          
