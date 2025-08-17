@@ -1,12 +1,7 @@
 name: Distributed Nuclei Scan
 
 
-on:
-  workflow_run:
-    workflows: ["permutate.yml"]
-    types:
-      - completed
-      
+on:   
   workflow_dispatch:
 
 permissions:
