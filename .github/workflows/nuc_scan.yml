@@ -259,8 +259,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: scan-chunks-package-${{ github.run_id }}
-          # Downloads to current directory
-
+     
       - name: Extract Chunks for Primary
         shell: bash
         run: |
@@ -285,7 +284,6 @@ jobs:
             echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
             
           fi
-
 
           # Update Nuclei templates to the latest version (good practice)
           echo "-> Updating Nuclei templates..."
