@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
 
-          PATTERN="Automated http-multiple results from Correlation ID:"
+          PATTERN="feat(http-multiple):"
           
           # The path pattern to find the target files using a wildcard (*)
           
@@ -72,7 +72,7 @@ jobs:
           # MODIFIED: The logic now ALWAYS searches the git log for the most recent
           # commit with the pattern. This is simpler and correctly finds the result
           # commit, implementing the "fallback" you want.
-          COMMIT=$(git log --no-merges --grep="$PATTERN" -n1 --format="%H")
+          COMMIT=$(git log --no-merges --grep="$PATTERN" -n1 --format="%H" || true)
 
           if [ -z "$COMMIT" ]; then
             printf "::error::No commit found matching '$PATTERN'\n"
@@ -83,8 +83,10 @@ jobs:
 
           # --- Block 2: Generating a Targeted Raw Diff using a Pathspec (Modified) ---
           printf "::group::[DEBUG] Block 2: Generating Raw Diff for paths matching '$TARGET_PATHSPEC'\n"
+          
           # We provide the wildcard pathspec to git. It will find ALL files matching
           # this pattern that were changed in the commit and create a combined diff.
+          
           if git rev-parse --verify $COMMIT^ >/dev/null 2>&1; then
             git diff "$COMMIT^" "$COMMIT" --unified=0 -- "$TARGET_PATHSPEC" > raw_diff.log || true
           else
@@ -93,8 +95,10 @@ jobs:
           printf "::endgroup::\n"
           
           # --- Block 3: Filtering Diff (Unchanged) ---
+          
           # This filtering logic does not need to change. It will correctly process
           # the combined diff from all the matched files.
+          
           printf "::group::[DEBUG] Block 3: Filtering Diff\n"
           grep '^\+' raw_diff.log --color=never | grep -vE '^\+\+\+' --color=never | awk -F' ' '{print $1}' > latest_entries.txt || true
 
@@ -122,8 +126,6 @@ jobs:
         run: |
           # --- Initialization ---
           JSON_MATRIX='[]'
-          # Define constants for clarity and easy maintenance.
-          # INPUT_FILE is the single source of truth from the previous step.
           INPUT_FILE="for_nuclei.txt"
           # DOMAIN_NAME is the static name for the subdirectory inside chunks/.
           DOMAIN_NAME="latestscan"
@@ -133,6 +135,8 @@ jobs:
           # --- Main Processing Logic ---
           # Instead of searching and looping, we now check for one specific file.
           # The '-s' flag checks if the file exists AND is not empty.
+
+          
           if [ ! -s "$INPUT_FILE" ]; then
             echo "WARNING: Input file '$INPUT_FILE' not found or is empty. No chunks will be created."
           else
@@ -146,6 +150,7 @@ jobs:
             
             # 3. Find all chunks that were just created and build the JSON matrix.
             # This loop is still needed, but it's now outside the old 'for' loop.
+            
             while IFS= read -r chunk_file_path; do
               # Skip any empty lines that 'find' might produce.
               [ -z "$chunk_file_path" ] && continue
@@ -153,7 +158,7 @@ jobs:
             done < <(find "chunks/$DOMAIN_NAME/" -name 'chunk_*' -type f -print)
           fi
 
-          # --- Final Output Generation (This logic is unchanged) ---
+          # --- Final Output Generation ---
           TOTAL_CHUNKS=$(echo "$JSON_MATRIX" | jq 'length')
           echo "FINAL_BUILD_INFO: Total target chunks in matrix: $TOTAL_CHUNKS"
           echo "full_matrix=$JSON_MATRIX" >> $GITHUB_OUTPUT
