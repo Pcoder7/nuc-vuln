@@ -299,6 +299,8 @@ jobs:
           nuclei \
             -l "$CHUNK_FILE_PATH" \
             -t ~/nuclei-templates/http/technologies \
+            -t ~/nuclei-templates/http/default-logins \
+            -t ~/nuclei-templates/http/exposed-panels \
             -ss template-spray \
             -c 50 \
             -bs 100 \
